@@ -28,7 +28,7 @@ import (
 // =====================================
 
 const (
-	ESP8266URL = "http://192.168.68.103"
+	ESP8266URL = "http://192.168.68.103:8081"
 
 	GEMINIURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
 
