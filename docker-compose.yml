@@ -3,6 +3,16 @@ services:
     image: wayanputri/myapp:latest
     container_name: iot-lampu-app
     restart: unless-stopped
-
     ports:
       - "8080:8080"
+    environment:
+      - JAEGER_ENDPOINT=http://jaeger:4318
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
