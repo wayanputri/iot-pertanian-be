@@ -1,3 +1,4 @@
+
 name: CI/CD
 
 on:
@@ -67,6 +68,18 @@ jobs:
     needs: docker
 
     steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Upload docker-compose.yml to VPS
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "docker-compose.yml"
+          target: "/home/wayan/iot-lampu"
+
       - name: Deploy application to VPS
         uses: appleboy/ssh-action@v1.2.2
         with:
@@ -75,15 +88,9 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
 
           script: |
-            APP_DIR="~/iot-lampu"
+            APP_DIR="/home/wayan/iot-lampu"
 
-            if [ ! -d "$APP_DIR/.git" ]; then
-              git clone https://github.com/USERNAME/REPOSITORY.git "$APP_DIR"
-            else
-              cd "$APP_DIR"
-              git pull
-            fi
-
+            mkdir -p "$APP_DIR"
             cd "$APP_DIR"
 
             docker compose pull
