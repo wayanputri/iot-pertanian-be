@@ -1,6 +1,6 @@
 services:
   app:
-    image: putri123/myapp:latest
+    image: wayanputri/myapp:latest
     container_name: iot-lampu-app
     restart: unless-stopped
 
