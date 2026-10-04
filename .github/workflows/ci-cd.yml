@@ -25,12 +25,10 @@ jobs:
           cache: true
 
       - name: Download Go dependencies
-        run: |
-          go mod download
+        run: go mod download
 
       - name: Run Go tests
-        run: |
-          go test ./...
+        run: go test ./...
 
 
   # ==========================================
@@ -75,7 +73,6 @@ jobs:
       - name: Create secrets.h
         run: |
           mkdir -p esp8266/include
-
           cat > esp8266/include/secrets.h <<EOF
           #ifndef SECRETS_H
           #define SECRETS_H
@@ -92,12 +89,10 @@ jobs:
           python-version: "3.x"
 
       - name: Install PlatformIO
-        run: |
-          pip install platformio
+        run: pip install platformio
 
       - name: Build ESP8266
-        run: |
-          pio run
+        run: pio run
 
 
   # ==========================================
@@ -112,10 +107,6 @@ jobs:
       - esp8266
 
     steps:
-
-      # ----------------------------------------
-      # SSH KE VPS
-      # ----------------------------------------
       - name: Deploy application to VPS
         uses: appleboy/ssh-action@v1.2.2
         with:
@@ -124,21 +115,11 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
 
           script: |
-
-            # ==================================
-            # 1. Masuk directory project
-            # ==================================
-
             cd ~/iot-lampu
-
-
-            # ==================================
-            # 2. Buat/update .env
-            # ==================================
 
             cat > .env <<EOF
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
-
+            MARIADB_ROOT_PASSWORD=${{ secrets.MARIADB_ROOT_PASSWORD }}
             MARIADB_DATABASE=myapp
             MARIADB_USER=myapp
             MARIADB_PASSWORD=${{ secrets.MARIADB_PASSWORD }}
@@ -146,41 +127,14 @@ jobs:
 
             chmod 600 .env
 
-
-            # ==================================
-            # 3. Login Docker Hub
-            # ==================================
-
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
-            docker login \
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login \
               -u "${{ secrets.DOCKERHUB_USERNAME }}" \
               --password-stdin
 
-
-            # ==================================
-            # 4. Pull image terbaru
-            # ==================================
-
             docker compose pull app
-
-
-            # ==================================
-            # 5. Start / update container
-            # ==================================
-
             docker compose up -d
 
-
-            # ==================================
-            # 6. Hapus image lama
-            # ==================================
-
             docker image prune -f
-
-
-            # ==================================
-            # 7. Tampilkan status container
-            # ==================================
 
             docker compose ps
 ```
