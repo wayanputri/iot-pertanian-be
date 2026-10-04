@@ -1,0 +1,16 @@
+untuk upload program ke ESP8266
+~/.platformio-venv/bin/platformio run --target upload --upload-port /dev/ttyUSB0
+
+
+
+untuk membuka serial monitor
+~/.platformio-venv/bin/platformio device monitor -p /dev/ttyUSB0 -b 115200
+
+
+- kalo gk konnect portnya maka ke powersell administrator
+usbipd list
+usbipd attach --wsl --busid 2-1
+
+- lalu cek port
+ls /dev/ttyUSB*
+

@@ -1,0 +1,14 @@
+.git
+.github
+.env
+secrets.h
+README.md
+
+tmp
+logs
+coverage
+*.log
+
+bin
+dist
+node_modules

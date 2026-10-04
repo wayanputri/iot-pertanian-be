@@ -1,0 +1,186 @@
+```yaml
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+
+  # ==========================================
+  # 1. TEST GO
+  # ==========================================
+  test-go:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download Go dependencies
+        run: |
+          go mod download
+
+      - name: Run Go tests
+        run: |
+          go test ./...
+
+
+  # ==========================================
+  # 2. BUILD & PUSH DOCKER
+  # ==========================================
+  docker:
+    runs-on: ubuntu-latest
+    needs: test-go
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKERHUB_USERNAME }}/myapp:latest \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push \
+            ${{ secrets.DOCKERHUB_USERNAME }}/myapp:latest
+
+
+  # ==========================================
+  # 3. BUILD ESP8266
+  # ==========================================
+  esp8266:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Create secrets.h
+        run: |
+          mkdir -p esp8266/include
+
+          cat > esp8266/include/secrets.h <<EOF
+          #ifndef SECRETS_H
+          #define SECRETS_H
+
+          #define WIFI_SSID "${{ secrets.WIFI_SSID }}"
+          #define WIFI_PASSWORD "${{ secrets.WIFI_PASSWORD }}"
+
+          #endif
+          EOF
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install PlatformIO
+        run: |
+          pip install platformio
+
+      - name: Build ESP8266
+        run: |
+          pio run
+
+
+  # ==========================================
+  # 4. DEPLOY TO VPS
+  # ==========================================
+  deploy:
+    runs-on: ubuntu-latest
+
+    needs:
+      - test-go
+      - docker
+      - esp8266
+
+    steps:
+
+      # ----------------------------------------
+      # SSH KE VPS
+      # ----------------------------------------
+      - name: Deploy application to VPS
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+
+          script: |
+
+            # ==================================
+            # 1. Masuk directory project
+            # ==================================
+
+            cd ~/iot-lampu
+
+
+            # ==================================
+            # 2. Buat/update .env
+            # ==================================
+
+            cat > .env <<EOF
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+
+            MARIADB_DATABASE=myapp
+            MARIADB_USER=myapp
+            MARIADB_PASSWORD=${{ secrets.MARIADB_PASSWORD }}
+            EOF
+
+            chmod 600 .env
+
+
+            # ==================================
+            # 3. Login Docker Hub
+            # ==================================
+
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | \
+            docker login \
+              -u "${{ secrets.DOCKERHUB_USERNAME }}" \
+              --password-stdin
+
+
+            # ==================================
+            # 4. Pull image terbaru
+            # ==================================
+
+            docker compose pull app
+
+
+            # ==================================
+            # 5. Start / update container
+            # ==================================
+
+            docker compose up -d
+
+
+            # ==================================
+            # 6. Hapus image lama
+            # ==================================
+
+            docker image prune -f
+
+
+            # ==================================
+            # 7. Tampilkan status container
+            # ==================================
+
+            docker compose ps
+```
