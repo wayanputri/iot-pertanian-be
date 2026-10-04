@@ -75,7 +75,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
 
           script: |
-            cd ~/iot-lampu
+            cd ~/home/wayan/iot-lampu
 
             docker compose pull
 
