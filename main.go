@@ -559,6 +559,7 @@ func writeJSON(
 
 	w.WriteHeader(statusCode)
 
+	log.Println("status code", statusCode)
 	err := json.NewEncoder(w).Encode(
 		data,
 	)
