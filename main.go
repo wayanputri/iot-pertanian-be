@@ -27,7 +27,7 @@ import (
 // =====================================
 
 const (
-	ESP8266URL = "http://103.160.63.215"
+	ESP8266URL = "http://103.160.63.215:8081"
 
 	// Gunakan model Gemini yang tersedia
 	// di API key/project kamu.
