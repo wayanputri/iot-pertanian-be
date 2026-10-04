@@ -31,7 +31,7 @@ DHT dht(DHT_PIN, DHT_TYPE);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // Web server
-ESP8266WebServer server(80);
+ESP8266WebServer server(8081);
 
 // =====================================
 // BATAS KONDISI
