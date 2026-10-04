@@ -1,4 +1,3 @@
-
 name: CI/CD
 
 on:
@@ -61,50 +60,11 @@ jobs:
 
 
   # ==========================================
-  # 3. BUILD ESP8266
-  # ==========================================
-  esp8266:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout source code
-        uses: actions/checkout@v4
-
-      - name: Create secrets.h
-        run: |
-          mkdir -p esp8266/include
-          cat > esp8266/include/secrets.h <<EOF
-          #ifndef SECRETS_H
-          #define SECRETS_H
-
-          #define WIFI_SSID "${{ secrets.WIFI_SSID }}"
-          #define WIFI_PASSWORD "${{ secrets.WIFI_PASSWORD }}"
-
-          #endif
-          EOF
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
-      - name: Install PlatformIO
-        run: pip install platformio
-
-      - name: Build ESP8266
-        run: pio run
-
-
-  # ==========================================
-  # 4. DEPLOY TO VPS
+  # 3. DEPLOY TO VPS
   # ==========================================
   deploy:
     runs-on: ubuntu-latest
-
-    needs:
-      - test-go
-      - docker
-      - esp8266
+    needs: docker
 
     steps:
       - name: Deploy application to VPS
@@ -117,21 +77,8 @@ jobs:
           script: |
             cd ~/iot-lampu
 
-            cat > .env <<EOF
-            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
-            MARIADB_ROOT_PASSWORD=${{ secrets.MARIADB_ROOT_PASSWORD }}
-            MARIADB_DATABASE=myapp
-            MARIADB_USER=myapp
-            MARIADB_PASSWORD=${{ secrets.MARIADB_PASSWORD }}
-            EOF
+            docker compose pull
 
-            chmod 600 .env
-
-            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login \
-              -u "${{ secrets.DOCKERHUB_USERNAME }}" \
-              --password-stdin
-
-            docker compose pull app
             docker compose up -d
 
             docker image prune -f

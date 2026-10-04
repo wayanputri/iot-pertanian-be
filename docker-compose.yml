@@ -6,23 +6,3 @@ services:
 
     ports:
       - "8080:8080"
-
-    env_file:
-      - .env
-
-    depends_on:
-      - mariadb
-
-  mariadb:
-    image: mariadb:10.11
-    container_name: iot-lampu-mariadb
-    restart: unless-stopped
-
-    env_file:
-      - .env
-
-    volumes:
-      - mariadb_data:/var/lib/mysql
-
-volumes:
-  mariadb_data:
