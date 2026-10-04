@@ -1,4 +1,4 @@
-```yaml
+
 name: CI/CD
 
 on:
@@ -137,4 +137,4 @@ jobs:
             docker image prune -f
 
             docker compose ps
-```
+
