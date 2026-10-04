@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // =====================================
@@ -29,8 +30,6 @@ import (
 const (
 	ESP8266URL = "http://103.160.63.215:8081"
 
-	// Gunakan model Gemini yang tersedia
-	// di API key/project kamu.
 	GEMINIURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
 
 	SERVICE_NAME = "iot-peternakan-api"
@@ -109,15 +108,6 @@ type SensorAPIResponse struct {
 
 func initTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
-	/*
-		JAEGER_ENDPOINT di Docker:
-
-		JAEGER_ENDPOINT=jaeger:4318
-
-		Karena OTLP HTTP exporter membutuhkan
-		host:port, bukan http://host:port.
-	*/
-
 	endpoint := os.Getenv("JAEGER_ENDPOINT")
 
 	if endpoint == "" {
@@ -141,7 +131,6 @@ func initTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 	res, err := resource.New(
 		ctx,
-
 		resource.WithAttributes(
 			semconv.ServiceName(SERVICE_NAME),
 			attribute.String(
@@ -181,7 +170,7 @@ func main() {
 	err := godotenv.Load()
 
 	if err != nil {
-		fmt.Println("Warning: .env file not found")
+		log.Println("Warning: .env file not found")
 	}
 
 	// =================================
@@ -232,13 +221,13 @@ func main() {
 	// START SERVER
 	// =================================
 
-	fmt.Println("================================")
-	fmt.Println(" IoT Peternakan API")
-	fmt.Println("================================")
-	fmt.Println("Server running on :8080")
-	fmt.Println("ESP8266:", ESP8266URL)
-	fmt.Println("Jaeger:", os.Getenv("JAEGER_ENDPOINT"))
-	fmt.Println("================================")
+	log.Println("================================")
+	log.Println(" IoT Peternakan API")
+	log.Println("================================")
+	log.Println("Server running on :8080")
+	log.Println("ESP8266:", ESP8266URL)
+	log.Println("Jaeger:", os.Getenv("JAEGER_ENDPOINT"))
+	log.Println("================================")
 
 	log.Fatal(
 		http.ListenAndServe(
@@ -268,10 +257,22 @@ func healthHandler(
 
 	start := time.Now()
 
-	log.Println("================================")
-	log.Println("[REQUEST]")
-	log.Println("Method:", r.Method)
-	log.Println("Path:", r.URL.Path)
+	// =================================
+	// REQUEST TRACE
+	// =================================
+
+	span.AddEvent(
+		"HTTP REQUEST",
+		trace.WithAttributes(
+			attribute.String("http.method", r.Method),
+			attribute.String("http.path", r.URL.Path),
+		),
+	)
+
+	span.SetAttributes(
+		attribute.String("http.request.method", r.Method),
+		attribute.String("url.path", r.URL.Path),
+	)
 
 	if r.Method != http.MethodGet {
 
@@ -282,6 +283,20 @@ func healthHandler(
 			),
 		)
 
+		span.AddEvent(
+			"HTTP RESPONSE",
+			trace.WithAttributes(
+				attribute.Int(
+					"http.status_code",
+					http.StatusMethodNotAllowed,
+				),
+				attribute.Int64(
+					"duration_ms",
+					time.Since(start).Milliseconds(),
+				),
+			),
+		)
+
 		writeJSON(
 			w,
 			http.StatusMethodNotAllowed,
@@ -289,13 +304,6 @@ func healthHandler(
 				"success": false,
 				"message": "method not allowed, use GET",
 			},
-		)
-
-		log.Println(
-			"[RESPONSE]",
-			http.StatusMethodNotAllowed,
-			"duration:",
-			time.Since(start),
 		)
 
 		return
@@ -319,17 +327,26 @@ func healthHandler(
 		),
 	)
 
-	// Hindari ctx tidak digunakan setelah span dibuat.
-	_ = ctx
-
-	log.Println(
-		"[RESPONSE]",
-		http.StatusOK,
-		"duration:",
-		time.Since(start),
+	span.SetStatus(
+		codes.Ok,
+		"health check berhasil",
 	)
 
-	log.Println("================================")
+	span.AddEvent(
+		"HTTP RESPONSE",
+		trace.WithAttributes(
+			attribute.Int(
+				"http.status_code",
+				http.StatusOK,
+			),
+			attribute.Int64(
+				"duration_ms",
+				time.Since(start).Milliseconds(),
+			),
+		),
+	)
+
+	_ = ctx
 }
 
 // =====================================
@@ -352,12 +369,17 @@ func sensorHandler(
 
 	start := time.Now()
 
-	log.Println()
-	log.Println("================================")
-	log.Println("[REQUEST]")
-	log.Println("Method:", r.Method)
-	log.Println("Path:", r.URL.Path)
-	log.Println("Time:", start.Format(time.RFC3339))
+	// =================================
+	// REQUEST TRACE
+	// =================================
+
+	span.AddEvent(
+		"HTTP REQUEST",
+		trace.WithAttributes(
+			attribute.String("http.method", r.Method),
+			attribute.String("http.path", r.URL.Path),
+		),
+	)
 
 	span.SetAttributes(
 		attribute.String(
@@ -383,6 +405,21 @@ func sensorHandler(
 			),
 		)
 
+		span.SetStatus(
+			codes.Error,
+			"method not allowed",
+		)
+
+		span.AddEvent(
+			"HTTP RESPONSE",
+			trace.WithAttributes(
+				attribute.Int(
+					"http.status_code",
+					http.StatusMethodNotAllowed,
+				),
+			),
+		)
+
 		writeJSON(
 			w,
 			http.StatusMethodNotAllowed,
@@ -392,13 +429,6 @@ func sensorHandler(
 			},
 		)
 
-		log.Println(
-			"[RESPONSE]",
-			http.StatusMethodNotAllowed,
-			"duration:",
-			time.Since(start),
-		)
-
 		return
 	}
 
@@ -406,18 +436,14 @@ func sensorHandler(
 	// 1. AMBIL DATA ESP8266
 	// =================================
 
-	log.Println("[STEP 1] Mengambil data ESP8266...")
+	span.AddEvent("STEP 1 - GET SENSOR ESP8266")
 
 	sensorData, err := getSensorFromESP8266(ctx)
 
 	if err != nil {
 
-		log.Println(
-			"[ERROR] Gagal mengambil data ESP8266:",
-			err,
-		)
-
 		span.RecordError(err)
+
 		span.SetStatus(
 			codes.Error,
 			"gagal mengambil data ESP8266",
@@ -427,6 +453,16 @@ func sensorHandler(
 			attribute.Int(
 				"http.response.status_code",
 				http.StatusBadGateway,
+			),
+		)
+
+		span.AddEvent(
+			"ESP8266 FAILED",
+			trace.WithAttributes(
+				attribute.String(
+					"error",
+					err.Error(),
+				),
 			),
 		)
 
@@ -440,40 +476,29 @@ func sensorHandler(
 			},
 		)
 
-		log.Println(
-			"[RESPONSE]",
-			http.StatusBadGateway,
-			"duration:",
-			time.Since(start),
-		)
-
-		log.Println("================================")
-
 		return
 	}
 
 	// =================================
-	// DATA SENSOR
+	// SENSOR DATA TRACE
 	// =================================
 
-	log.Println()
-	log.Println("================================")
-	log.Println(" DATA SENSOR")
-	log.Println("================================")
-
-	log.Printf(
-		"Suhu       : %.1f C\n",
-		sensorData.Suhu,
-	)
-
-	log.Printf(
-		"Kelembapan : %.1f %%\n",
-		sensorData.Kelembapan,
-	)
-
-	log.Printf(
-		"Status     : %s\n",
-		sensorData.Status,
+	span.AddEvent(
+		"SENSOR DATA RECEIVED",
+		trace.WithAttributes(
+			attribute.Float64(
+				"sensor.suhu",
+				sensorData.Suhu,
+			),
+			attribute.Float64(
+				"sensor.kelembapan",
+				sensorData.Kelembapan,
+			),
+			attribute.String(
+				"sensor.status",
+				sensorData.Status,
+			),
+		),
 	)
 
 	span.SetAttributes(
@@ -495,7 +520,7 @@ func sensorHandler(
 	// 2. ANALISIS AI
 	// =================================
 
-	log.Println("[STEP 2] Mengirim data ke Gemini...")
+	span.AddEvent("STEP 2 - SEND DATA TO GEMINI")
 
 	aiResult, err := analyzeWithGemini(
 		ctx,
@@ -504,12 +529,8 @@ func sensorHandler(
 
 	if err != nil {
 
-		log.Println(
-			"[ERROR] Gagal melakukan analisis AI:",
-			err,
-		)
-
 		span.RecordError(err)
+
 		span.SetStatus(
 			codes.Error,
 			"analisis AI gagal",
@@ -519,6 +540,16 @@ func sensorHandler(
 			attribute.Int(
 				"http.response.status_code",
 				http.StatusBadGateway,
+			),
+		)
+
+		span.AddEvent(
+			"GEMINI FAILED",
+			trace.WithAttributes(
+				attribute.String(
+					"error",
+					err.Error(),
+				),
 			),
 		)
 
@@ -533,20 +564,48 @@ func sensorHandler(
 			},
 		)
 
-		log.Println(
-			"[RESPONSE]",
-			http.StatusBadGateway,
-			"duration:",
-			time.Since(start),
-		)
-
-		log.Println("================================")
-
 		return
 	}
 
 	// =================================
-	// 3. GABUNGKAN RESPONSE
+	// AI RESULT TRACE
+	// =================================
+
+	span.AddEvent(
+		"AI ANALYSIS RECEIVED",
+		trace.WithAttributes(
+			attribute.String(
+				"ai.kondisi",
+				aiResult.Kondisi,
+			),
+			attribute.Bool(
+				"ai.bahaya",
+				aiResult.Bahaya,
+			),
+			attribute.String(
+				"ai.analisis",
+				aiResult.Analisis,
+			),
+			attribute.String(
+				"ai.saran",
+				aiResult.Saran,
+			),
+		),
+	)
+
+	span.SetAttributes(
+		attribute.String(
+			"ai.kondisi",
+			aiResult.Kondisi,
+		),
+		attribute.Bool(
+			"ai.bahaya",
+			aiResult.Bahaya,
+		),
+	)
+
+	// =================================
+	// 3. RESPONSE
 	// =================================
 
 	response := SensorAPIResponse{
@@ -554,10 +613,6 @@ func sensorHandler(
 		Data:       sensorData,
 		AnalisisAI: aiResult,
 	}
-
-	// =================================
-	// RESPONSE API
-	// =================================
 
 	writeJSON(
 		w,
@@ -570,6 +625,10 @@ func sensorHandler(
 			"http.response.status_code",
 			http.StatusOK,
 		),
+		attribute.Int64(
+			"http.response.duration_ms",
+			time.Since(start).Milliseconds(),
+		),
 	)
 
 	span.SetStatus(
@@ -577,15 +636,19 @@ func sensorHandler(
 		"request berhasil",
 	)
 
-	log.Println()
-	log.Println("[RESPONSE]")
-	log.Println("Status:", http.StatusOK)
-	log.Println(
-		"Duration:",
-		time.Since(start),
+	span.AddEvent(
+		"HTTP RESPONSE",
+		trace.WithAttributes(
+			attribute.Int(
+				"http.status_code",
+				http.StatusOK,
+			),
+			attribute.Int64(
+				"duration_ms",
+				time.Since(start).Milliseconds(),
+			),
+		),
 	)
-
-	log.Println("================================")
 }
 
 // =====================================
@@ -610,15 +673,46 @@ func getSensorFromESP8266(
 
 	defer span.End()
 
-	// =================================
-	// HTTP CLIENT
-	// =================================
-
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
 
 	url := ESP8266URL + "/sensor"
+
+	// =================================
+	// REQUEST TRACE
+	// =================================
+
+	span.SetAttributes(
+		attribute.String(
+			"http.request.method",
+			http.MethodGet,
+		),
+		attribute.String(
+			"server.address",
+			ESP8266URL,
+		),
+		attribute.String(
+			"http.url",
+			url,
+		),
+	)
+
+	span.AddEvent(
+		"ESP8266 REQUEST",
+		trace.WithAttributes(
+			attribute.String(
+				"method",
+				http.MethodGet,
+			),
+			attribute.String(
+				"url",
+				url,
+			),
+		),
+	)
+
+	start := time.Now()
 
 	// =================================
 	// CREATE REQUEST
@@ -634,37 +728,24 @@ func getSensorFromESP8266(
 	if err != nil {
 
 		span.RecordError(err)
+
 		span.SetStatus(
 			codes.Error,
 			"gagal membuat request ESP8266",
 		)
 
+		span.AddEvent(
+			"ESP8266 REQUEST ERROR",
+			trace.WithAttributes(
+				attribute.String(
+					"error",
+					err.Error(),
+				),
+			),
+		)
+
 		return data, err
 	}
-
-	span.SetAttributes(
-		attribute.String(
-			"http.request.method",
-			http.MethodGet,
-		),
-		attribute.String(
-			"server.address",
-			ESP8266URL,
-		),
-	)
-
-	// =================================
-	// REQUEST LOG
-	// =================================
-
-	start := time.Now()
-
-	log.Println()
-	log.Println("--------------------------------")
-	log.Println("[ESP8266 REQUEST]")
-	log.Println("Method:", http.MethodGet)
-	log.Println("URL:", url)
-	log.Println("--------------------------------")
 
 	// =================================
 	// SEND REQUEST
@@ -676,16 +757,32 @@ func getSensorFromESP8266(
 
 	if err != nil {
 
-		log.Println("[ESP8266 ERROR]")
-		log.Println("Error:", err)
-		log.Println("Duration:", duration)
-		log.Println("--------------------------------")
-
 		span.RecordError(err)
 
 		span.SetStatus(
 			codes.Error,
 			"ESP8266 request gagal",
+		)
+
+		span.SetAttributes(
+			attribute.Int64(
+				"http.response.duration_ms",
+				duration.Milliseconds(),
+			),
+		)
+
+		span.AddEvent(
+			"ESP8266 ERROR",
+			trace.WithAttributes(
+				attribute.String(
+					"error",
+					err.Error(),
+				),
+				attribute.Int64(
+					"duration_ms",
+					duration.Milliseconds(),
+				),
+			),
 		)
 
 		return data, err
@@ -694,12 +791,8 @@ func getSensorFromESP8266(
 	defer resp.Body.Close()
 
 	// =================================
-	// RESPONSE LOG
+	// RESPONSE TRACE
 	// =================================
-
-	log.Println("[ESP8266 RESPONSE]")
-	log.Println("Status:", resp.StatusCode)
-	log.Println("Duration:", duration)
 
 	span.SetAttributes(
 		attribute.Int(
@@ -709,6 +802,20 @@ func getSensorFromESP8266(
 		attribute.Int64(
 			"http.response.duration_ms",
 			duration.Milliseconds(),
+		),
+	)
+
+	span.AddEvent(
+		"ESP8266 RESPONSE",
+		trace.WithAttributes(
+			attribute.Int(
+				"http.status_code",
+				resp.StatusCode,
+			),
+			attribute.Int64(
+				"duration_ms",
+				duration.Milliseconds(),
+			),
 		),
 	)
 
@@ -730,6 +837,16 @@ func getSensorFromESP8266(
 			"ESP8266 HTTP error",
 		)
 
+		span.AddEvent(
+			"ESP8266 HTTP ERROR",
+			trace.WithAttributes(
+				attribute.Int(
+					"http.status_code",
+					resp.StatusCode,
+				),
+			),
+		)
+
 		return data, err
 	}
 
@@ -744,17 +861,37 @@ func getSensorFromESP8266(
 	if err != nil {
 
 		span.RecordError(err)
+
 		span.SetStatus(
 			codes.Error,
 			"gagal membaca response ESP8266",
 		)
 
+		span.AddEvent(
+			"ESP8266 READ RESPONSE ERROR",
+			trace.WithAttributes(
+				attribute.String(
+					"error",
+					err.Error(),
+				),
+			),
+		)
+
 		return data, err
 	}
 
-	log.Println(
-		"[ESP8266 RESPONSE BODY]",
-		string(responseBody),
+	// =================================
+	// RESPONSE BODY TRACE
+	// =================================
+
+	span.AddEvent(
+		"ESP8266 RESPONSE BODY",
+		trace.WithAttributes(
+			attribute.String(
+				"body",
+				string(responseBody),
+			),
+		),
 	)
 
 	// =================================
@@ -771,9 +908,20 @@ func getSensorFromESP8266(
 	if err != nil {
 
 		span.RecordError(err)
+
 		span.SetStatus(
 			codes.Error,
 			"response ESP8266 bukan JSON valid",
+		)
+
+		span.AddEvent(
+			"ESP8266 JSON PARSE ERROR",
+			trace.WithAttributes(
+				attribute.String(
+					"error",
+					err.Error(),
+				),
+			),
 		)
 
 		return data, err
@@ -797,28 +945,22 @@ func getSensorFromESP8266(
 			"ESP8266 mengembalikan error",
 		)
 
+		span.AddEvent(
+			"ESP8266 APPLICATION ERROR",
+			trace.WithAttributes(
+				attribute.String(
+					"message",
+					espResponse.Message,
+				),
+			),
+		)
+
 		return data, err
 	}
 
 	// =================================
 	// SENSOR DATA
 	// =================================
-
-	log.Println("[ESP8266 DATA]")
-	log.Printf(
-		"Suhu: %.1f C\n",
-		espResponse.Data.Suhu,
-	)
-
-	log.Printf(
-		"Kelembapan: %.1f %%\n",
-		espResponse.Data.Kelembapan,
-	)
-
-	log.Printf(
-		"Status: %s\n",
-		espResponse.Data.Status,
-	)
 
 	span.SetAttributes(
 		attribute.Float64(
@@ -832,6 +974,24 @@ func getSensorFromESP8266(
 		attribute.String(
 			"sensor.status",
 			espResponse.Data.Status,
+		),
+	)
+
+	span.AddEvent(
+		"ESP8266 SENSOR DATA",
+		trace.WithAttributes(
+			attribute.Float64(
+				"suhu",
+				espResponse.Data.Suhu,
+			),
+			attribute.Float64(
+				"kelembapan",
+				espResponse.Data.Kelembapan,
+			),
+			attribute.String(
+				"status",
+				espResponse.Data.Status,
+			),
 		),
 	)
 
@@ -867,6 +1027,25 @@ func analyzeWithGemini(
 	defer span.End()
 
 	// =================================
+	// SENSOR DATA TRACE
+	// =================================
+
+	span.SetAttributes(
+		attribute.Float64(
+			"sensor.suhu",
+			sensor.Suhu,
+		),
+		attribute.Float64(
+			"sensor.kelembapan",
+			sensor.Kelembapan,
+		),
+		attribute.String(
+			"sensor.status",
+			sensor.Status,
+		),
+	)
+
+	// =================================
 	// API KEY
 	// =================================
 
@@ -885,6 +1064,16 @@ func analyzeWithGemini(
 		span.SetStatus(
 			codes.Error,
 			"Gemini API key tidak ditemukan",
+		)
+
+		span.AddEvent(
+			"GEMINI API KEY ERROR",
+			trace.WithAttributes(
+				attribute.String(
+					"error",
+					err.Error(),
+				),
+			),
 		)
 
 		return result, err
@@ -966,6 +1155,7 @@ Kelembapan = %.1f %%
 	if err != nil {
 
 		span.RecordError(err)
+
 		span.SetStatus(
 			codes.Error,
 			"gagal marshal request Gemini",
@@ -1002,9 +1192,8 @@ Kelembapan = %.1f %%
 		"application/json",
 	)
 
-	// IMPORTANT:
-	// API KEY sengaja tidak dimasukkan
-	// ke log/tracing.
+	// Jangan pernah memasukkan API key
+	// ke Jaeger attribute/event.
 
 	req.Header.Set(
 		"x-goog-api-key",
@@ -1022,23 +1211,33 @@ Kelembapan = %.1f %%
 		),
 	)
 
+	// =================================
+	// GEMINI REQUEST TRACE
+	// =================================
+
+	span.AddEvent(
+		"GEMINI REQUEST",
+		trace.WithAttributes(
+			attribute.String(
+				"method",
+				http.MethodPost,
+			),
+			attribute.String(
+				"url",
+				GEMINIURL,
+			),
+			attribute.String(
+				"content_type",
+				"application/json",
+			),
+		),
+	)
+
 	client := &http.Client{
 		Timeout: 20 * time.Second,
 	}
 
-	// =================================
-	// REQUEST LOG
-	// =================================
-
 	start := time.Now()
-
-	log.Println()
-	log.Println("--------------------------------")
-	log.Println("[GEMINI REQUEST]")
-	log.Println("Method:", http.MethodPost)
-	log.Println("URL:", GEMINIURL)
-	log.Println("Content-Type: application/json")
-	log.Println("--------------------------------")
 
 	// =================================
 	// SEND REQUEST
@@ -1050,16 +1249,32 @@ Kelembapan = %.1f %%
 
 	if err != nil {
 
-		log.Println("[GEMINI ERROR]")
-		log.Println("Error:", err)
-		log.Println("Duration:", duration)
-		log.Println("--------------------------------")
-
 		span.RecordError(err)
 
 		span.SetStatus(
 			codes.Error,
 			"Gemini request gagal",
+		)
+
+		span.SetAttributes(
+			attribute.Int64(
+				"http.response.duration_ms",
+				duration.Milliseconds(),
+			),
+		)
+
+		span.AddEvent(
+			"GEMINI ERROR",
+			trace.WithAttributes(
+				attribute.String(
+					"error",
+					err.Error(),
+				),
+				attribute.Int64(
+					"duration_ms",
+					duration.Milliseconds(),
+				),
+			),
 		)
 
 		return result, err
@@ -1068,12 +1283,8 @@ Kelembapan = %.1f %%
 	defer resp.Body.Close()
 
 	// =================================
-	// RESPONSE STATUS
+	// RESPONSE TRACE
 	// =================================
-
-	log.Println("[GEMINI RESPONSE]")
-	log.Println("Status:", resp.StatusCode)
-	log.Println("Duration:", duration)
 
 	span.SetAttributes(
 		attribute.Int(
@@ -1083,6 +1294,20 @@ Kelembapan = %.1f %%
 		attribute.Int64(
 			"http.response.duration_ms",
 			duration.Milliseconds(),
+		),
+	)
+
+	span.AddEvent(
+		"GEMINI RESPONSE",
+		trace.WithAttributes(
+			attribute.Int(
+				"http.status_code",
+				resp.StatusCode,
+			),
+			attribute.Int64(
+				"duration_ms",
+				duration.Milliseconds(),
+			),
 		),
 	)
 
@@ -1103,17 +1328,31 @@ Kelembapan = %.1f %%
 			"gagal membaca response Gemini",
 		)
 
+		span.AddEvent(
+			"GEMINI READ RESPONSE ERROR",
+			trace.WithAttributes(
+				attribute.String(
+					"error",
+					err.Error(),
+				),
+			),
+		)
+
 		return result, err
 	}
 
-	// Jangan log API key.
-	// Response Gemini aman untuk debugging,
-	// tapi sebaiknya jangan digunakan untuk
-	// production logging jika berisi data sensitif.
+	// =================================
+	// RESPONSE BODY TRACE
+	// =================================
 
-	log.Println(
-		"[GEMINI RESPONSE BODY]",
-		string(responseBody),
+	span.AddEvent(
+		"GEMINI RESPONSE BODY",
+		trace.WithAttributes(
+			attribute.String(
+				"body",
+				string(responseBody),
+			),
+		),
 	)
 
 	// =================================
@@ -1217,11 +1456,15 @@ Kelembapan = %.1f %%
 			Parts[0].
 			Text
 
-	log.Println()
-	log.Println("================================")
-	log.Println(" ANALISIS AI")
-	log.Println("================================")
-	log.Println(answer)
+	span.AddEvent(
+		"AI ANSWER RECEIVED",
+		trace.WithAttributes(
+			attribute.String(
+				"answer",
+				answer,
+			),
+		),
+	)
 
 	// =================================
 	// PARSE JSON GEMINI
@@ -1234,19 +1477,29 @@ Kelembapan = %.1f %%
 
 	if err != nil {
 
-		err := fmt.Errorf(
+		parseErr := fmt.Errorf(
 			"response Gemini bukan JSON valid: %w",
 			err,
 		)
 
-		span.RecordError(err)
+		span.RecordError(parseErr)
 
 		span.SetStatus(
 			codes.Error,
 			"Gemini response JSON invalid",
 		)
 
-		return result, err
+		span.AddEvent(
+			"GEMINI JSON PARSE ERROR",
+			trace.WithAttributes(
+				attribute.String(
+					"error",
+					parseErr.Error(),
+				),
+			),
+		)
+
+		return result, parseErr
 	}
 
 	// =================================
@@ -1261,6 +1514,36 @@ Kelembapan = %.1f %%
 		attribute.Bool(
 			"ai.bahaya",
 			result.Bahaya,
+		),
+		attribute.String(
+			"ai.analisis",
+			result.Analisis,
+		),
+		attribute.String(
+			"ai.saran",
+			result.Saran,
+		),
+	)
+
+	span.AddEvent(
+		"AI ANALYSIS RESULT",
+		trace.WithAttributes(
+			attribute.String(
+				"kondisi",
+				result.Kondisi,
+			),
+			attribute.Bool(
+				"bahaya",
+				result.Bahaya,
+			),
+			attribute.String(
+				"analisis",
+				result.Analisis,
+			),
+			attribute.String(
+				"saran",
+				result.Saran,
+			),
 		),
 	)
 
@@ -1294,7 +1577,6 @@ func writeJSON(
 	)
 
 	if err != nil {
-
 		log.Println(
 			"Gagal mengirim response JSON:",
 			err,
